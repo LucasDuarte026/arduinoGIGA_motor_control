@@ -95,8 +95,7 @@ void handleEncoderChange() {
   interrupts(); // Re-enable interrupts
 }
 
-
-
+ 
 // --- Task Implementations ---
 void system_health_task() {
     for (;;) {
