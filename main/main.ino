@@ -11,6 +11,7 @@ using namespace mbed;       // For ThisThread, Callback, etc.
 #define RGB_GREEN_PIN PA_1 // Example pin, change as needed
 #define RGB_BLUE_PIN  PA_2 // Example pin, change as needed
 
+Mutex SerialMutex; // Mutex to protect Serial access
 
 // Define the pins connected to the encoder A and B phases
 // For Arduino Mega, Digital Pins 2 and 3 are external interrupt pins.
@@ -45,12 +46,13 @@ volatile int lastEncoderStateB;
 
 // Queue to send encoder data from reader task to printer task
 // The type of data in the queue is a pointer to long.
-Queue<long, 10> encoder_data_queue; // Store long values, capacity of 10
+Queue<long, 100> encoder_data_queue; // Store long values, capacity of 10
 
 // --- Task Function Prototypes ---
 void system_health_task();    // Your LED blinking task
 void encoder_reader_task();   // Task to read encoder and put data in queue
 void encoder_printer_task();  // Task to get data from queue and print it
+void drive_control_task();  // Task to get data from queue and print it
 
 // --- Interrupt Service Routine (ISR) for Encoder ---
 // This function will be called automatically when an interrupt occurs on ENCODER_PIN_A or ENCODER_PIN_B.
@@ -77,7 +79,7 @@ void handleEncoderChange() {
     } else {
       encoderCount--; // Counter-clockwise rotation 
     }
-  }
+  } 
   // ensure we only process if A *didn't* change but B did.
   else if (currentEncoderStateB != lastEncoderStateB) { // If B has changed (and A did not)
     // The logic here is essentially the inverse of the first 'if' block's logic
@@ -101,7 +103,9 @@ void system_health_task() {
     for (;;) {
 
         digitalWrite(LED_BUILTIN, HIGH); // Turn LED on er
-        Serial.print("System health task: LED ON time is: ");
+        SerialMutex.lock();
+        Serial.println("System health task: LED ON time is: ");
+        SerialMutex.unlock();
         Serial.print(time(NULL)); Serial.println();
         ThisThread::sleep_for(std::chrono::seconds(1)); // Use chrono duration
         digitalWrite(LED_BUILTIN, LOW);  // Turn LED off
@@ -121,14 +125,16 @@ void encoder_reader_task() {
         interrupts();
 
         // Only send data if the position has changed from the last time we sent it (it helps the overload when the motor is stopped).
-        static long lastSentPosition = -999; // Using static to retain value between calls
+        static long lastSentPosition = -999999; // Using static to retain value between calls
         if (currentEncoderPositionForQueue != lastSentPosition) {
             if (encoder_data_queue.try_put(&currentEncoderPositionForQueue)) {
                  // Data successfully sent.
                  lastSentPosition = currentEncoderPositionForQueue;
             } else {
                 // If the queue is full, it means the printer task is not keeping up.
-                Serial.println("Encoder queue full, data lost!");
+                SerialMutex.lock(); // Acquire mutex before printing
+                // Serial.println("Encoder queue full, data lost!");
+                SerialMutex.unlock(); 
             }
         }
         ThisThread::sleep_for(std::chrono::milliseconds(10)); // Check and send every 10ms
@@ -147,43 +153,66 @@ void encoder_printer_task() {
         if (evt.status == osEventMessage) {
             // The received data is in evt.value.p (a pointer to void).
             // Cast it back to a pointer of the correct type (long*) and dereference it.
+      
+            SerialMutex.lock(); // Acquire mutex before printing
             receivedPosition = *(long*)evt.value.p;
             Serial.print(millis());
-            Serial.print(" | Encoder Position: ");
+            Serial.print("| Encoder Position: ");
             Serial.println(receivedPosition);
+            SerialMutex.unlock(); 
         } else {
             // This case should ideally not be reached with osWaitForever,
             // unless there's a critical error in Mbed OS (e.g., queue deleted or system error).
+            SerialMutex.lock(); // Acquire mutex before printing
             Serial.print("Error receiving from encoder queue! Status: ");
             Serial.println(evt.status); // Print status for debugging
+            SerialMutex.unlock(); 
         }
     }
 }
 
 // -------- ------------ Control the motor ----------- ---------------
+String padLeft(long value, int width, char padChar = ' ') {
+    String s = String(value);
+    while (s.length() < width) {
+        s = padChar + s;
+    }
+    return s;
+}
 
-void drive_control() {
+void drive_control_task() {
 
     int pot_value; // Variable to store the data received from the queue
     // This prevents the task from consuming CPU when there's no data to print. just wait for data to be available.
     int past_time = millis(); // Record the start time for the task
     for (;;) {
+      motor_direction = digitalRead(SWITCH_BUTTON_DIRECTION_PIN) ? HIGH : LOW; // Read the switch state to determine motor direction
       digitalWrite(DIRECTION_PIN, motor_direction ? HIGH : LOW); // Set direction based on the motor_direction variable
       // Serial.println("read break: " + String(digitalRead(BUTTON_BRAKE_PIN)));
+      
+      long rawRead =  analogRead(CURRENT_SENSING_PIN);
+      float current = rawRead * (2000/3.3) * (3.3/4096);
+      SerialMutex.lock();  
+      // Serial.print(" |");
+      // Serial.print(padLeft(rawRead, 10)); // Aqui você usa a função padLeft
+      // Serial.print(" | current ");
+      // Serial.println(current, 2);
+      // SerialMutex.unlock();  
       if(digitalRead(BUTTON_BRAKE_PIN) == LOW) { // If the brake is engaged
         digitalWrite(BRAKE_PIN, 0); // Set PWM to 0 (brake)
         Serial.println("Brake engaged, motor stopping.");
       }
       else{
         pot_value = analogRead(POTENTIOMETER_PIN); // Read the potentiometer value from A0          (0 - 1024) 
-        Serial.println("direction: " + String(digitalRead(SWITCH_BUTTON_DIRECTION_PIN)));
+        // Serial.println("direction: " + String(digitalRead(SWITCH_BUTTON_DIRECTION_PIN)));
         // Serial.println("POT: " + String(pot_value));
+        
+        
         analogWrite(CONTROL_PWM_PIN, pot_value / 4); // Scale the potentiometer value to PWM range  (0 -  255)
         if(millis() - past_time > 1000) { // Every second, print the potentiometer value
-            // Serial.print("Potentiometer value: ");
-            // Serial.println(pot_value);
-            past_time = millis(); // Reset 
-      }
+          // Serial.println("Potentiometer value: " + String(pot_value) +" | wrote: " + String(pot_value/4));
+          past_time = millis(); // Reset 
+        }
     }
     }
 }
@@ -226,10 +255,10 @@ void setup() {
     encoder_read_thread->start(callback(encoder_reader_task));
 
     Thread *encoder_print_thread = new Thread(osPriorityNormal);
-    encoder_print_thread->start(callback(encoder_printer_task));
+    // encoder_print_thread->start(callback(encoder_printer_task));
 
     Thread *drive_control_thread = new Thread(osPriorityNormal);
-    drive_control_thread->start(callback(drive_control));
+    drive_control_thread->start(callback(drive_control_task));
     
     sys_health.overall_sys = true; // Set the overall system state to true indicating the system is operational
 }
