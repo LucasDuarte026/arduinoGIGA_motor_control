@@ -47,7 +47,7 @@ volatile long encoderCount = 0; // important to declare it as volatile to preven
 bool motor_direction = false; // false (LOW) for clockwise, true (HIGH) for counter-clockwise
 
 // Variables to store the last known states of the encoder pins
-// These are also volatile as they are modified inside the ISR.
+// These are also volatile as they are modified inside the ISR. 
 volatile int lastEncoderStateA;
 volatile int lastEncoderStateB;
 volatile long rawCurrent = 0; // Variable to store the raw current reading from the ACS712 sensor in the A9 pin
