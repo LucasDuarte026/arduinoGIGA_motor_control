@@ -1,5 +1,7 @@
 # Real-Time DC Motor Control with Arduino Giga & Mbed OS
 
+![Language](https://img.shields.io/badge/Language-C++-blue.svg) 
+
 This project implements a real-time control system for a brushed DC motor using an Arduino Giga R1 board. It leverages the Mbed OS RTOS to manage multiple concurrent tasks, including reading a quadrature encoder, calculating velocity, and controlling the motor based on user input.
 
 ## 🌟 Overview
