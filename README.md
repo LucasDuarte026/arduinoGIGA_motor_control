@@ -32,7 +32,7 @@ The system separates tasks into different threads to ensure that time-sensitive 
 | **Voltage Sensor**| Custom Voltage Divider | Scales motor voltage to be read by the Giga's 3.3V ADC. |
 | **HMI** | Potentiometer, Switch, Button | Provides user control for speed, direction, and braking. |
 
-![Hardware Schematics](documentation/schematics.png)
+![Hardware Schematic](documentation/schematic.png)
 
 ---
 
